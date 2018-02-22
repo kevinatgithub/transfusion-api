@@ -1,0 +1,295 @@
+<?php
+	class BloodRequestController extends BaseController{
+		public $restful = true;
+		public $layout = 'layout.default';
+
+		function setNav(){
+			if(User::guest()){
+				$this->layout->nav = View::make('layout.nav_public');
+			}else{
+				$this->layout->nav = View::make('layout.nav_private',['currentPage'=>'Blood Request']);
+			}
+		}
+
+		function get_clearfilters(){
+			//Clear Session Filters
+			BloodRequest::clearListFilter();
+			return Redirect::to('BloodRequest');
+		}
+
+
+		function get_index(){
+			$this->get_list();
+		}
+
+		function get_list(){
+			$this->setNav();
+			$user = User::current();
+			$filters = BloodRequest::getListFilter();
+			if(array_key_exists('donation_id', $filters)){
+				$bloodRequests = BloodRequest::searchByDonationID();
+			}else if(array_key_exists('patient_name', $filters) !== false || array_key_exists('physician_name', $filters) !== false){
+				$bloodRequests = BloodRequest::nonEagerLoading();
+			}else{
+				$bloodRequests = BloodRequest::nonEagerLoading();
+				// $bloodRequests = BloodRequest::eagerLoading();
+			}
+
+			// var_dump($bloodRequests->getTotal());
+			// dd($bloodRequests->getTotal());
+			$this->layout->content = View::make('bloodRequest.list',['bloodRequests' => $bloodRequests]);
+		}
+
+		function post_index(){
+			$user = User::current();
+			$indexes = Input::get('index');
+			if($indexes != null){
+				foreach($indexes as $index){
+					$details = BloodRequestDetails::where('request_id','=',$index)->where('facility_cd','=',$user->facility_cd)->get();
+					foreach($details as $detail){
+						if($detail->unit_stat != 'D'){
+							DB::update(DB::raw("UPDATE component SET comp_stat = 'AVA' WHERE donation_id = '".$detail->donation_id."' AND component_cd = '".$detail->component_cd."'"));
+
+						}
+					}
+					//BloodRequest::where('request_id','=',$index)->where('facility_cd','=',$user->facility_cd)->delete();
+					$request = BloodRequest::where('request_id','=',$index)->where('facility_cd','=',$user->facility_cd)->first();
+					$request->disable_flg = 'Y';
+					$request->save();
+				}
+				return Redirect::to('BloodRequest');
+			}
+			$search = Input::get('search');
+			if($search != ''){
+				BloodRequest::setListFilters(Input::all());
+				return Redirect::to('BloodRequest');
+			}
+			
+		}
+
+		function get_create(){
+			$this->setNav();
+			$user = User::current();
+			$bloodRequestDetailsError = null;
+			$row_blood_types = BloodType::all();
+			$blood_types = ['' => 'Please Select'];
+			foreach($row_blood_types as $bt){
+				$blood_types[$bt['blood_type']] = $bt['blood_type'];
+			}
+			$row_components = Component::where('disable_flg','=','n')->get();
+			$components = [];
+			foreach($row_components as $co){
+				$components[$co->component_cd] = $co->comp_name;
+			}
+			/*$content = View::make('bloodRequest.form',['blood_types' => $blood_types,'components' => $components]);
+			$content->patient_list = View::make('patient.list');*/
+			$this->layout->content = View::make('bloodRequest.form',['blood_types' => $blood_types,'components' => $components,'bloodRequestDetailsError' => $bloodRequestDetailsError]);
+		}
+
+		function post_create(){
+			$this->setNav();
+			$user = User::current();
+			$bloodRequestDetailsError = null;
+			$row_blood_types = BloodType::all();
+			$blood_types = ['' => 'Please Select'];
+			foreach($row_blood_types as $bt){
+				$blood_types[$bt['blood_type']] = $bt['blood_type'];
+			}
+			$row_components = Component::where('disable_flg','=','n')->get();
+			$components = [];
+			$component_rules = [];
+			foreach($row_components as $co){
+				$components[$co->component_cd] = $co->comp_name;
+				$component_rules[$co->component_cd] = 'numeric';
+			}
+			$data = Input::all();
+			$validation = Validator::make($data,BloodRequest::getRules());
+
+			if(array_key_exists('quantity', $data) === false){
+				$bloodRequestDetailsError = "Please select blood component for the request";
+			}else if(count($data['quantity']) == 0){
+				$bloodRequestDetailsError = "Please select blood component for the request";
+			}else{
+				foreach($data['quantity'] as $cc => $quantity){
+					if($quantity == '' || $quantity == 0){
+						$bloodRequestDetailsError = "Incomplete blood request details";
+					}
+				}
+			}
+			if($bloodRequestDetailsError == null){
+				$validation2 = Validator::make($data['quantity'],$component_rules);
+				if(!$validation->fails() && !$validation2->fails()){
+					$request_id = BloodRequest::generateID();
+					$new_request = [
+						'seqno' => BloodRequest::generateSequenceNo(),
+						'request_id' => $request_id,
+						'facility_cd' => $user->facility_cd,
+						'patient_id' => $data['patient_id'],
+						'patient_care' => $data['patient_care'],
+						'physician_id' => $data['physician_id'],
+						'diagnosis' => $data['diagnosis'],
+						'hemo_level' => $data['hemo_level'],
+						'blood_type' => $data['blood_type'],
+						'status' => 'Q',
+						'created_by' => $user->user_id,
+						'created_dt' => date('Y-m-d H:i:s')
+					];
+					$conf = FacilityConfig::current();
+					
+					if($conf['enable_patient_ward_no'] == 'Y'){
+						$new_request['ward_no'] = $data['ward_no'];
+					}
+
+					if($conf['enable_patient_room_no'] == 'Y'){
+						$new_request['room_no'] = $data['room_no'];
+					}
+
+					if($conf['enable_patient_bed_no'] == 'Y'){
+						$new_request['bed_no'] = $data['bed_no'];
+					}
+
+					BloodRequest::insert($new_request);
+					foreach($data['quantity'] as $cc => $q){
+						for($i = 0; $i < $q; $i++){
+							BloodRequestDetails::insert([
+								'id' => BloodRequestDetails::generateID(0,$request_id),
+								'facility_cd' => $user->facility_cd,
+								'request_id' => $request_id,
+								'component_cd' => $cc,
+								'unit_stat' => 'L'
+							]);
+						}
+					}
+					return Redirect::to('BloodRequest');
+				}
+			}
+			$this->layout->content = View::make('bloodRequest.form',['blood_types' => $blood_types,'components' => $components,'validation' => $validation,'bloodRequestDetailsError' => $bloodRequestDetailsError]);
+		}
+
+		function get_viewRequest($request_id){
+			$user = User::current();
+			$this->setNav();
+			
+			$components = Component::where('disable_flg','=','N')->get(['component_cd','comp_name'])->all();
+			$item_components = ['' => ''];
+			foreach($components as $c){
+				$item_components[$c->component_cd] = $c->comp_name;
+			}
+			
+			$sources = OtherSource::where('user_facility_cd','=',$user->facility_cd)->get(['source_id','facility_name'])->all();
+			$item_sources = [];
+			foreach($sources as $s){
+				$item_sources[$s->source_id] = $s->facility_name;
+			}
+			
+			$discard_reasons = DB::table('r_codedtl')->where('code','=','DISCARD')->where('disable_flg','=','N')->get(['codedtl_cd','code_val']);
+			$items_discard_reasons = [];
+			foreach($discard_reasons as $d){
+				$items_discard_reasons[$d->codedtl_cd] = $d->code_val;
+			}
+			$items_discard_reasons['OTH'] = 'Other';
+			
+			$transfusion_cancel_reasons = DB::table('r_codedtl')->where('code','=','TRANSFUSION_CANCEL_REASON')->where('disable_flg','=','N')->get(['codedtl_cd','code_val']);
+			$items_transfusion_cancel_reasons = ['' => '--New--'];
+			foreach($transfusion_cancel_reasons as $t){
+				$items_transfusion_cancel_reasons[$t->codedtl_cd] = $t->code_val;
+			}
+
+			$transfusion_reactions = TransfusionReaction::all();
+
+			$bloodRequest = BloodRequest::where('request_id','=',$request_id)->where('facility_cd','=',$user->facility_cd)->first();
+			$this->layout->content = View::make('bloodRequest.view',
+				['bloodRequest' => $bloodRequest,
+				'item_components' => $item_components,
+				'item_sources' => $item_sources,
+				'items_discard_reasons' => $items_discard_reasons,
+				'items_transfusion_cancel_reasons' => $items_transfusion_cancel_reasons,
+				'transfusion_reactions' => $transfusion_reactions]);
+		}
+
+		function get_print($seqno,$detail_id,$type){
+			$bloodRequest = BloodRequest::where('seqno','=',$seqno)->first();
+			$detail = BloodRequestDetails::where('id','=',$detail_id)->where('request_id','=',$bloodRequest->request_id)->first();
+			$this->layout = View::make('layout.inline_fluid');
+			$this->layout->content = View::make('bloodRequest.printSticker',['bloodRequest' => $bloodRequest, 'detail' => $detail, 'type' => $type]);
+		}
+
+		function get_previewCompatibilityTestResult($seqno,$detail_id,$type){
+			$bloodRequest = BloodRequest::where('seqno','=',$seqno)->first();
+			$detail = BloodRequestDetails::where('id','=',$detail_id)->where('request_id','=',$bloodRequest->request_id)->first();
+			$this->layout = View::make('layout.inline_fluid');
+			$this->layout->content = View::make('bloodRequest.previewCompatibilityTestResult',['bloodRequest' => $bloodRequest, 'detail' => $detail, 'type' => $type]);
+		}
+
+		function post_previewCompatibilityTestResult($seqno,$detail_id,$type){
+			$bloodRequest = BloodRequest::where('seqno','=',$seqno)->first();
+			$detail = BloodRequestDetails::where('id','=',$detail_id)->where('request_id','=',$bloodRequest->request_id)->first();
+			$detail->leuko = Input::get('leuko') != null ? true : false;
+			$detail->irradiated = Input::get('irradiated') != null ? true : false;
+			$detail->washed = Input::get('washed') != null ? true : false;
+			$detail->crossmatch_cs_no = Input::get('crossmatch_cs_no');
+			$detail->specimen_no = Input::get('specimen_no');
+			$detail->patient_antibody_screening = Input::get('patient_antibody_screening');
+			$detail->unit_antibody_screening = Input::get('unit_antibody_screening');
+			$detail->nat = Input::get('nat');
+			$detail->bb_head = Input::get('bb_head');
+			$detail->bb_head_position = Input::get('bb_head_position');
+			$detail->mt_name = Input::get('mt_name');
+			$detail->mt2_name = Input::get('mt2_name');
+			$detail->mt_position = Input::get('mt_position');
+			$detail->remark = Input::get('remark');
+			$detail->save();
+			return Redirect::to('BloodRequest/printCompatibilityTestResult/'.$seqno.'/'.$detail_id.'/'.$type);
+		}
+
+		function get_printCompatibilityTestResult($seqno,$detail_id,$type){
+			$bloodRequest = BloodRequest::where('seqno','=',$seqno)->first();
+			$detail = BloodRequestDetails::where('id','=',$detail_id)->where('request_id','=',$bloodRequest->request_id)->first();
+			$this->layout = View::make('layout.inline_fluid');
+			$this->layout->content = View::make('bloodRequest.printCompatibilityTestResult',['bloodRequest' => $bloodRequest, 'detail' => $detail, 'type' => $type]);
+		}
+
+		function post_cancelBloodRequest(){
+			//exit(json_encode(Input::all()));
+			$bloodRequest = Input::get('bloodRequest');
+			$user = User::current();
+			$request = BloodRequest::where('seqno','=',$bloodRequest['seqno'])->first();
+			$details = BloodRequestDetails::where('request_id','=',$request->request_id)->where('facility_cd','=',$user->facility_cd)->get();
+			$reason = Input::get('reason');
+			//exit(json_encode($details));
+			foreach($details as $detail){
+				$detail->unit_stat = 'X';
+				if($detail->bloodUnit != null){
+					if($detail->bloodUnit->comp_stat == 'RES'){
+						/*$detail->bloodUnit->comp_stat = 'AVA';
+						$detail->bloodUnit->save();*/
+						DB::update(DB::raw("UPDATE component SET comp_stat = 'AVA' WHERE donation_id = '".$detail->bloodUnit->donation_id."' AND component_cd = '".$detail->bloodUnit->component_cd."'"));
+					}
+				}
+				$detail->save();
+			}
+			$request->status = 'C';
+			$request->cancel_remarks = $reason;
+			$request->save();
+			exit(json_encode(Input::all()));
+		}
+
+		function post_reserveBloodRequest(){
+			$bloodRequest = Input::get('bloodRequest');
+			$user = User::current();
+			$request = BloodRequest::where('seqno','=',$bloodRequest['seqno'])->first();
+			$details = BloodRequestDetails::where('request_id','=',$request->request_id)->where('facility_cd','=',$user->facility_cd)->get();
+			$request->status = 'R';
+			$request->save();
+			exit(json_encode(Input::all()));
+		}
+
+		function get_issuanceForm($seqno){
+			$user = User::where('user_id','=',User::current()->user_id)->first();
+			$request = BloodRequest::where('seqno','=',$seqno)->first();
+			$details = BloodRequestDetails::where('request_id','=',$request->request_id)->where('facility_cd','=',$user->facility_cd)->where('unit_stat','=','I')->get();
+
+			$this->layout = View::make('layout.inline_fluid');
+			$this->layout->content = View::make('bloodRequest.printIssuance',['bloodRequest' => $request, 'details' => $details,'user'=>$user]);
+		}
+	}

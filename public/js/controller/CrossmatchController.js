@@ -1,0 +1,90 @@
+function CrossmatchController($scope,$http){
+
+	$scope.crossmatch.printSticker = function(detail_id,type){
+		window.open(url_printSticker+detail_id+"/"+type,"Print Sticker",'status=0,location=0,resizable=0,width=520, height=250');
+	}
+
+	$scope.crossmatch.previewCompatibilityTestResult = function(detail_id,type){
+		window.open(url_previewCompatibilityTestResult+"/"+detail_id+"/"+type,"Compatibility Test Result",'width=1400, height=1000');
+	}
+
+	$scope.crossmatch.printCompatibilityTestResult = function(detail_id,type){
+		window.open(url_printCompatibilityTestResult+"/"+detail_id+"/"+type,"Compatibility Test Result",'status=0,location=0,resizable=0,width=1000, height=800');
+	}
+
+	$scope.crossmatch.toggleEditMode = function(){
+		if($scope.crossmatch.editMode){
+			for(i in $scope.crossmatch.temporaryDetails){
+				d = $scope.crossmatch.temporaryDetails[i];
+				d.crossmatch_result = null;
+			}
+			$scope.crossmatch.editMode = false;
+		}else{
+			$scope.crossmatch.editMode = true;
+		}
+	}
+
+	$scope.crossmatch.editable = function(detail){
+
+		if(detail.unit_stat == 'I'){
+			return false;
+		}
+		if($scope.crossmatch.editMode){
+			if(detail.expiration_dt != '' && detail.expiration_dt != null && detail.unit_stat != 'X' && detail.unit_stat != 'R'  && detail.unit_stat != 'D'){
+				return true;
+			}else{
+				return false;
+			}
+		}else{
+			return false;
+		}
+	}
+
+	$scope.crossmatch.getStyle = function(detail,textOnly){
+		if(detail.crossmatch_result == 'C'){
+			return !textOnly ? 'background:#dff0d8;' : 'color:green;';
+		}else if(detail.crossmatch_result == 'I'){
+			return  !textOnly ? 'background:#f2dede;' : 'color:red;';
+		}else if(detail.crossmatch_result == 'T'){
+			return  !textOnly ? 'background:#c2ddea;' : 'color:#31708f;font-weight:bold;';
+		}
+		return null;
+	}
+
+	$scope.crossmatch.saveChanges = function(){
+		var formData = {
+			details : $scope.crossmatch.details,
+			bloodRequest : bloodRequest,
+			user_id : user_id,
+			facility_cd : facility_cd
+		};
+		$http.post(url_crossmatchSave,formData).success(function(data){
+			console.log(data);
+			window.location.reload();
+		});
+
+		
+	}
+
+	$scope.crossmatch.submitChanges = function(){
+		/*$("#verifierForm").modal("show");
+		$scope.verifier.setVerify($scope.crossmatch.submitChanges);*/
+		
+		if($scope.verifier.user_id == null || $scope.verifier.password == null){
+			return;
+		}
+
+		if($scope.verifier.user_id == '' || $scope.verifier.password == ''){
+			return;
+		}
+		
+	}
+
+	$scope.crossmatch.crossmatchState = function(detail){
+		if(detail.component_cd == '30' || detail.component_cd == '40' || detail.component_cd == '50' || detail.component_cd == '60' ){
+			return true;
+		}else{
+			return false;
+		}
+	}
+}

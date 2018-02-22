@@ -1,0 +1,6 @@
+<?php
+	class Component extends Eloquent{
+
+		public $table = 'r_component';
+		public $timestamps = false;
+	}

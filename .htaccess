@@ -1,0 +1,5 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    RewriteRule ^(.*)$ http://nbbnets.net/tmc/transfusion/public/$1 [L]
+</IfModule>
